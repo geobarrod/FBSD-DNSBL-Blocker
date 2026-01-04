@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# PROVIDE: dnsbl_blocker
+# REQUIRE: DAEMON
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="dnsbl_blocker"
+rcvar="dnsbl_blocker_enable"
+
+command="/root/bin/fbsd-dnsbl-blocker"
+command_args="daemon"
+pidfile="/var/run/${name}.pid"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+dnsbl_blocker_start() {
+    echo "Starting ${name}..."
+    daemon -S -T ${name} -r -p ${pidfile} ${command} ${command_args}
+}
+
+dnsbl_blocker_stop() {
+    echo "Stopping ${name}..."
+    if [ -f ${pidfile} ]; then
+        kill $(cat ${pidfile}) && rm -f ${pidfile}
+    else
+        echo "No pidfile found, is ${name} running?"
+    fi
+}
+
+dnsbl_blocker_status() {
+    if [ -f ${pidfile} ]; then
+        echo "${name} is running with PID $(cat ${pidfile})"
+    else
+        echo "${name} is not running"
+    fi
+}
+
+load_rc_config $name
+run_rc_command "$1"

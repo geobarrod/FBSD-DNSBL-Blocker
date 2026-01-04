@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# FreeBSD DNS Blocklists Blocker
+# Author: Geovanni B.R. (geobarrod) <igeo.cu at gmail.com> - 2026-01-04
+#
+# ================================= Documentation ===========================================
+# Purpose:
+#   Downloads multiple DNS blocklists (DNSBL) containing domains used for ads, tracking,
+#   malware, fake news, gambling, and other unwanted categories. Merges them into a single
+#   /etc/hosts file to block resolution of these domains at the system level.
+#
+# Usage:
+#   sudo fbsd-dnsbl-blocker {daemon|update|list|restore}
+#
+# Options:
+#   daemon    Run continuously, updating blocklists every 24 hours.
+#   update    Perform a one-time update of blocklists, rebuild /etc/hosts, and restart services.
+#   list      Show all blocked domains (lines with 0.0.0.0) and count them.
+#   restore   Restore the most recent /etc/hosts backup.
+#
+# Configuration Variables:
+#   SYSCONF_DIR   Directory containing system configuration files (default: /etc).
+#   DNS_FILE      Target hosts file name (default: hosts).
+#   TMP_FILE      Temporary file used during updates.
+#   DNSBL_FILE    Temporary merged blocklist file before replacing /etc/hosts.
+#   BACKUP_DIR    Directory for backups (default: /etc).
+#   URLS          List of external DNSBL sources to download.
+#
+# Features:
+#   - Downloads multiple DNSBL sources from trusted projects (StevenBlack, anudeepND, DeveloperDan).
+#   - Extracts domains mapped to 0.0.0.0 and merges them.
+#   - Ensures localhost and IPv6 loopback entries remain intact.
+#   - Adds system hostname and broadcast address to /etc/hosts.
+#   - Creates timestamped backups of /etc/hosts before replacement.
+#   - Provides restore option to recover the last backup.
+#   - Provides daemon mode for daily refresh.
+#   - Restarts local DNS and proxy services after update (unbound, dnsmasq, squid, postfix).
+#
+# Requirements:
+#   - FreeBSD system with root privileges.
+#   - bash, fetch, grep, sort, uniq, ifconfig, hostname utilities available.
+#   - Services like local_unbound, dnsmasq, squid, postfix installed if restart is desired.
+#
+# ===========================================================================================
+
+SYSCONF_DIR="/etc"
+DNS_FILE="hosts"
+TMP_FILE="/tmp/${DNS_FILE}.tmp"
+DNSBL_FILE="/tmp/${DNS_FILE}.bls"
+BACKUP_DIR="/etc"
+
+URLS="
+https://raw.githubusercontent.com/anudeepND/blacklist/refs/heads/master/adservers.txt
+https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling-porn/hosts
+https://www.github.developerdan.com/hosts/lists/ads-and-tracking-extended.txt
+https://www.github.developerdan.com/hosts/lists/amp-hosts-extended.txt
+https://www.github.developerdan.com/hosts/lists/dating-services-extended.txt
+https://www.github.developerdan.com/hosts/lists/hate-and-junk-extended.txt
+https://www.github.developerdan.com/hosts/lists/tracking-aggressive-extended.txt
+"
+
+backup_hosts() {
+    cp "${SYSCONF_DIR}/${DNS_FILE}" \
+       "${BACKUP_DIR}/${DNS_FILE}.$(date +%Y%m%d%H%M%S).bak" 2>/dev/null
+}
+
+update_lists() {
+    : > "$TMP_FILE"
+    for url in $URLS; do
+        echo "Downloading $url..."
+        fetch -o - "$url" >> "$TMP_FILE"
+    done
+
+    echo "Extract and sort unique domains..."
+    grep -w '^0.0.0.0' "$TMP_FILE" \
+        | sort \
+        | uniq > "$DNSBL_FILE"
+
+    cat << EOF >> "$DNSBL_FILE"
+
+127.0.0.1 localhost
+127.0.0.1 localhost.localdomain
+127.0.0.1 local
+255.255.255.255 broadcasthost
+::1 localhost
+::1 ip6-localhost
+::1 ip6-loopback
+fe80::1%lo0 localhost
+ff00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+ff02::3 ip6-allhosts
+0.0.0.0 0.0.0.0
+EOF
+
+    echo "$(ifconfig | grep -w broadcast | xargs | head -n1 | awk -F ' ' '{print $2}') $(hostname -s) $(hostname -f)" >> "$DNSBL_FILE"
+
+    backup_hosts
+    mv "$DNSBL_FILE" "${SYSCONF_DIR}/${DNS_FILE}"
+    rm "$TMP_FILE"
+    echo "Done."
+}
+
+daemon_loop() {
+    while true; do
+        update_lists
+        sleep 86400
+    done
+}
+
+case "$1" in
+    daemon)
+        daemon_loop
+        ;;
+    update)
+        update_lists
+        service local_unbound restart &>/dev/null
+        service dnsmasq restart &>/dev/null
+        service squid restart &>/dev/null
+        service postfix restart &>/dev/null
+        ;;
+    list)
+        grep -w '0.0.0.0' "${SYSCONF_DIR}/${DNS_FILE}"
+        grep -w '0.0.0.0' "${SYSCONF_DIR}/${DNS_FILE}" | wc -l
+        ;;
+    restore)
+        latest_backup=$(ls -t $BACKUP_DIR/${DNS_FILE}.*.bak 2>/dev/null | head -n 1)
+        [ -n "$latest_backup" ] && cp "$latest_backup" "${SYSCONF_DIR}/${DNS_FILE}"
+        ;;
+    *)
+        echo "Usage: ${0##*/} {daemon|update|list|restore}"
+        ;;
+esac
