@@ -79,7 +79,7 @@ sudo fbsd-dnsbl-blocker restore
 Clone the repository and run the installer:
 ```sh
 git clone https://github.com/geobarrod/FBSD-DNSBL-Blocker.git
-cd fbsd-dnsbl-blocker
+cd FBSD-DNSBL-Blocker
 sudo make install
 ```
 
@@ -88,7 +88,7 @@ sudo make install
 ## Uninstallation
 To remove the fbsd-dnsbl-blocker and service:
 ```sh
-cd fbsd-dnsbl-blocker
+cd FBSD-DNSBL-Blocker
 sudo make uninstall
 ```
 
